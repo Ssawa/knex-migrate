@@ -7,6 +7,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "rm -rf ./lib && babel src --out-dir lib --copy-files"
   },
+  "bin": {
+    "migrator": "./bin/cli.js"
+  },
   "devDependencies": {
     "babel-cli": "^6.26.0",
     "babel-eslint": "^8.0.1",
