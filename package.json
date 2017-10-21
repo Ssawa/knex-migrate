@@ -18,6 +18,7 @@
     "eslint-plugin-import": "^2.8.0"
   },
   "dependencies": {
+    "glob": "^7.1.2",
     "knex": "^0.13.0",
     "sqlite3": "^3.1.13"
   }

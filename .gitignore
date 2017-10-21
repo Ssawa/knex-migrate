@@ -2,3 +2,4 @@ node_modules
 lib
 *.sqlite3
 knexfile.js
+migrations

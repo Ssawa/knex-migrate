@@ -1,6 +1,7 @@
 // Migrator
 // -------
 import fs from 'fs';
+import glob from 'glob';
 import path from 'path';
 import mkdirp from 'mkdirp';
 import Promise from 'bluebird';
@@ -10,6 +11,10 @@ import {
   isEmpty, isUndefined, map, max, template
 } from 'lodash'
 import inherits from 'inherits';
+
+const readFile = Promise.promisify(fs.readFile, {context: fs});
+const writeFile = Promise.promisify(fs.writeFile, {context: fs});
+const stat = Promise.promisify(fs.stat, {context: fs});
 
 function LockError(msg) {
   this.name = 'MigrationLocked';
@@ -26,6 +31,17 @@ const CONFIG_DEFAULT = Object.freeze({
   directory: './migrations',
   disableTransactions: false
 });
+
+function runSQL(knex, dir, filename) {
+  return readFile(path.join(dir, filename)).then(sql => {
+    sql = sql.toString();
+
+    return knex.raw(sql.toString()).catch((err) => {
+      if (err.stack.match(/SQLITE_MISUSE: not an error/)) return;
+      throw err;
+    })
+  });
+}
 
 // The new migration we're performing, typically called from the `knex.migrate`
 // interface on the main `knex` object. Passes the `knex` instance performing
@@ -48,7 +64,6 @@ export default class Migrator {
       .tap(validateMigrationList)
       .spread((all, completed) => {
         const migrations = difference(all, completed);
-
         const transactionForAll = !this.config.disableTransactions
           && isEmpty(filter(migrations, name => {
             const migration = require(path.join(this._absoluteConfigDir(), name));
@@ -113,30 +128,29 @@ export default class Migrator {
       return Promise.reject(new Error('A name must be specified for the generated migration'));
     }
 
-    return this._ensureFolder(config)
+    const folder = path.join(this._absoluteConfigDir(), yyyymmddhhmmss() + '_' + name);
+    return this._ensureFolder(folder)
       .then((val) => this._generateStubTemplate(val))
-      .then((val) => this._writeNewMigration(name, val));
+      .then((val) => this._writeNewMigration(folder, val));
   }
 
   // Lists all available migration versions, as a sorted array.
   _listAll(config) {
     this.config = this.setConfig(config);
     const loadExtensions = this.config.loadExtensions;
-    return Promise.promisify(fs.readdir, {context: fs})(this._absoluteConfigDir())
+    return Promise.promisify(glob)(path.join(this._absoluteConfigDir(), '*', this._indexFile()))
       .then(migrations => {
-        return filter(migrations, function(value) {
-          const extension = path.extname(value);
-          return includes(loadExtensions, extension);
+        return migrations.map((value) => {
+          return value.replace(this._absoluteConfigDir(), '');
         }).sort();
       })
   }
 
   // Ensures a folder for the migrations exist, dependent on the migration
   // config settings.
-  _ensureFolder() {
-    const dir = this._absoluteConfigDir();
-    return Promise.promisify(fs.stat, {context: fs})(dir)
-      .catch(() => Promise.promisify(mkdirp)(dir));
+  _ensureFolder(folder) {
+    return stat(folder)
+      .catch(() => Promise.promisify(mkdirp)(folder));
   }
 
   // Ensures that a proper table has been created, dependent on the migration
@@ -284,22 +298,29 @@ export default class Migrator {
   _generateStubTemplate() {
     const stubPath = this.config.stub ||
       path.join(__dirname, 'stub', this.config.extension + '.stub');
-    return Promise.promisify(fs.readFile, {context: fs})(stubPath).then(stub =>
+    return readFile(stubPath).then(stub =>
       template(stub.toString(), {variable: 'd'})
     );
   }
 
-  // Write a new migration to disk, using the config and generated filename,
+  _indexFile() {
+    return 'index.' + this.config.extension;
+  }
+
+  // Write a new migration to disk, using the config and generated folder,
   // passing any `variables` given in the config to the template.
-  _writeNewMigration(name, tmpl) {
+  _writeNewMigration(folder, tmpl) {
     const { config } = this;
-    const dir = this._absoluteConfigDir();
-    if (name[0] === '-') name = name.slice(1);
-    const filename = yyyymmddhhmmss() + '_' + name + '.' + config.extension;
-    return Promise.promisify(fs.writeFile, {context: fs})(
-      path.join(dir, filename),
-      tmpl(config.variables || {})
-    ).return(path.join(dir, filename));
+    return Promise.all(
+      [
+        writeFile(
+          path.join(folder, this._indexFile()),
+          tmpl(config.variables || {})
+        ),
+        writeFile(path.join(folder, 'up.sql'), '-- Up Migration\n'),
+        writeFile(path.join(folder, 'down.sql'), '-- Down Migration\n')
+      ]
+    ).return(folder);
   }
 
   // Get the last batch of migrations, by name, ordered by insert id in reverse
@@ -349,7 +370,7 @@ export default class Migrator {
         if (!trx && this._useTransaction(migration, disableTransactions)) {
           return this._transaction(migration, direction, name)
         }
-        return warnPromise(migration[direction](trxOrKnex, Promise), name)
+        return warnPromise(migration[direction](trxOrKnex, Promise, runSQL), name)
       })
         .then(() => {
           log.push(path.join(directory, name));
@@ -371,7 +392,7 @@ export default class Migrator {
 
   _transaction(migration, direction, name) {
     return this.knex.transaction((trx) => {
-      return warnPromise(migration[direction](trx, Promise), name, () => {
+      return warnPromise(migration[direction](trx, Promise, runSQL), name, () => {
         trx.commit()
       })
     })
