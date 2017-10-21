@@ -1,5 +1,4 @@
 {
-  "parser": "babel-eslint",
   "extends": [
     "eslint:recommended",
     "plugin:import/errors",
@@ -17,10 +16,8 @@
     "prefer-const": 1,
     "no-fallthrough": 1
   },
-  "settings": {
-    "import/parser": "babel-eslint"
-  },
   "env": {
-    "node": true
+    "node": true,
+    "es6": true
   }
 }
