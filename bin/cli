@@ -4,11 +4,10 @@ var Liftoff = require('liftoff');
 var interpret = require('interpret');
 var chalk = require('chalk');
 var tildify = require('tildify');
-var commander = require('commander');
 var Migrator = require('../lib');
 var Cli = require('../lib/cli');
 
-function initMigrator(env) {
+function initMigrator(env, commander) {
 
   Cli.checkLocalModule(env);
 
@@ -45,25 +44,4 @@ function initMigrator(env) {
   return new Migrator(knex(config));
 }
 
-var cli = new Liftoff({
-  name: 'knex',
-  extensions: interpret.jsVariants,
-  v8flags: require('v8flags')
-});
-
-cli.on('require', function(name) {
-  console.log('Requiring external module', chalk.magenta(name));
-});
-
-cli.on('requireFail', function(name) {
-  console.log(chalk.red('Failed to load external module'), chalk.magenta(name));
-});
-
-cli.launch({
-  cwd: Cli.argv.cwd,
-  configPath: Cli.argv.knexfile,
-  require: Cli.argv.require,
-  completion: Cli.argv.completion
-}, function (env) {
-  Cli.invoke(initMigrator(env), commander, env)
-});
+Cli.bootstrap(initMigrator);
